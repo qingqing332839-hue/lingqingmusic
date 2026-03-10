@@ -5,10 +5,42 @@ import { motion } from 'framer-motion'
 import { ChevronRight, Play } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { Playlist } from '@/lib/data'
+import { cn } from '@/lib/utils'
+import { useState } from 'react'
 
 interface HorizontalScrollProps {
   title: string
   items: Playlist[]
+}
+
+function PlaylistCover({ src, alt }: { src: string, alt: string }) {
+  const [isLoaded, setIsLoaded] = useState(false);
+  const [isError, setIsError] = useState(false);
+  return (
+    <div className="aspect-square rounded-lg overflow-hidden bg-black mb-3 relative shadow-lg group-hover:shadow-neon-green/20 transition-all">
+      {!isError && src && (
+        <img 
+          src={src} 
+          alt={alt} 
+          className={cn(
+            "w-full h-full object-cover transition-opacity duration-500",
+            isLoaded ? "opacity-100" : "opacity-0"
+          )}
+          onLoad={() => setIsLoaded(true)}
+          onError={() => setIsError(true)}
+        />
+      )}
+      
+      {/* Overlay Play Button */}
+      {isLoaded && (
+        <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+          <div className="w-12 h-12 bg-neon-green rounded-full flex items-center justify-center text-black">
+            <Play className="w-6 h-6 fill-current ml-1" />
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function HorizontalScroll({ title, items }: HorizontalScrollProps) {
@@ -39,16 +71,7 @@ export function HorizontalScroll({ title, items }: HorizontalScrollProps) {
             whileHover={{ scale: 1.05 }}
             onClick={() => router.push(`/playlist/${item.id}`)}
           >
-            <div className="aspect-square rounded-lg overflow-hidden bg-zinc-800 mb-3 relative shadow-lg group-hover:shadow-neon-green/20 transition-all">
-              <img src={item.cover} alt={item.title} className="w-full h-full object-cover" />
-              
-              {/* Overlay Play Button */}
-              <div className="absolute inset-0 bg-black/40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                <div className="w-12 h-12 bg-neon-green rounded-full flex items-center justify-center text-black">
-                  <Play className="w-6 h-6 fill-current ml-1" />
-                </div>
-              </div>
-            </div>
+            <PlaylistCover src={item.cover} alt={item.title} />
             <h3 className="font-bold text-white truncate">{item.title}</h3>
             <p className="text-sm text-zinc-400 truncate">{item.songs.length} songs</p>
           </motion.div>
