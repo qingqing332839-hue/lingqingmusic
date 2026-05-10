@@ -1,11 +1,11 @@
 'use client'
 
 import { playlists, Song } from '@/lib/data'
-import { Play, Loader2, Heart, ListVideo, ListPlus } from 'lucide-react'
+import { Play, Heart, ListVideo, ListPlus } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
 import { SearchBar } from '@/components/ui/SearchBar'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Tooltip } from '@/components/ui/Tooltip'
 import { usePlayerStore } from '@/lib/store'
 import { useToast } from '@/components/ui/Toast'
@@ -62,22 +62,77 @@ function CoverImage({ src, alt, className }: { src: string, alt: string, classNa
     );
 }
 
-import { HomeCharts } from '@/components/HomeCharts'
-import { SongRecommendations } from '@/components/ui/SongRecommendations'
 import { FeatureGrid } from '@/components/FeatureGrid'
 import dynamic from 'next/dynamic'
+
+const HomeCharts = dynamic(() => import('@/components/HomeCharts').then((mod) => mod.HomeCharts), {
+  ssr: false,
+  loading: () => <div className="h-[360px] w-full flex items-center justify-center text-zinc-600">加载榜单中...</div>
+})
+
+const SongRecommendations = dynamic(
+  () => import('@/components/ui/SongRecommendations').then((mod) => mod.SongRecommendations),
+  {
+    ssr: false,
+    loading: () => <div className="h-[250px] w-full flex items-center justify-center text-zinc-600">加载推荐中...</div>
+  }
+)
 
 const QQRankList = dynamic(() => import('@/components/QQRankList'), { 
   ssr: false,
   loading: () => <div className="h-[360px] w-full flex items-center justify-center text-zinc-600">加载排行榜...</div>
 })
 
+function LazySection({
+  children,
+  minHeight = 240,
+  rootMargin = '320px 0px',
+}: {
+  children: React.ReactNode
+  minHeight?: number
+  rootMargin?: string
+}) {
+  const [shouldRender, setShouldRender] = useState(false)
+  const containerRef = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    if (shouldRender || !containerRef.current) return
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) {
+          setShouldRender(true)
+          observer.disconnect()
+        }
+      },
+      { rootMargin }
+    )
+
+    observer.observe(containerRef.current)
+
+    return () => observer.disconnect()
+  }, [rootMargin, shouldRender])
+
+  return (
+    <div ref={containerRef}>
+      {shouldRender ? (
+        children
+      ) : (
+        <div
+          className="w-full rounded-xl border border-white/5 bg-white/[0.02]"
+          style={{ minHeight }}
+        />
+      )}
+    </div>
+  )
+}
+
 export default function Home() {
   const router = useRouter()
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState<Song[]>([])
   const [isSearching, setIsSearching] = useState(false)
-  const { playSong, addToQueue, addToPlaylist, toggleFavorite, isFavorite, currentSong, isPlaying, togglePlay } = usePlayerStore()
+  const { playSong, addToQueue, addToPlaylist, toggleFavorite, isFavorite, currentSong } = usePlayerStore()
   const { showToast } = useToast()
 
   const handleSearchSubmit = async (query: string) => {
@@ -293,50 +348,60 @@ export default function Home() {
           <FeatureGrid />
 
           <SongRecommendations />
+
+          <LazySection minHeight={420}>
+            <QQRankList />
+          </LazySection>
           
-          <QQRankList />
-          
-          <div className="w-full px-8 mb-8">
-            <HomeCharts />
-          </div>
+          <LazySection minHeight={420}>
+            <div className="w-full px-8 mb-8">
+              <HomeCharts />
+            </div>
+          </LazySection>
 
-          <SongRecommendations title=" 时光回响 · 岁月如歌" section="mixed" />
+          <LazySection minHeight={320}>
+            <SongRecommendations title=" 时光回响 · 岁月如歌" section="mixed" />
+          </LazySection>
 
-          <SongRecommendations title=" 全场景音乐 · 听见生活" section="scene" />
+          <LazySection minHeight={320}>
+            <SongRecommendations title=" 全场景音乐 · 听见生活" section="scene" />
+          </LazySection>
 
-          <div className="grid grid-cols-9 gap-4 md:gap-6 lg:gap-8 w-full px-4 md:px-8 lg:px-12 mb-8 md:mb-12">
-            {playlists.map((playlist, index) => (
-              <motion.div
-                key={playlist.id}
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: index * 0.05 }}
-                className="group cursor-pointer"
-                onClick={() => router.push(`/playlist/${playlist.id}`)}
-              >
-                {/* Card Image - Proportional size */}
-                <div className={`relative w-full aspect-square rounded-lg overflow-hidden mb-2 shadow-lg ${shadowColors[playlist.id] || 'group-hover:shadow-white/20'} transition-all duration-300 bg-gradient-to-br ${playlist.gradient} flex items-center justify-center p-2`}>
-                  {/* Centered Title - Scaled down proportionally */}
-                  <h3 className="font-black text-white text-xs sm:text-sm md:text-base lg:text-lg xl:text-xl text-center leading-tight drop-shadow-md whitespace-pre-line group-hover:scale-110 transition-transform duration-300">
-                    {/* If title already contains newline, use it directly. Otherwise try to split by keywords. */}
-                    {playlist.title.includes('\n') 
-                      ? playlist.title 
-                      : playlist.title.replace(/榜单|歌手|歌单|热歌|民谣|金曲|古风|唛榜|排行/, (match) => `\n${match}`)
-                    }
-                  </h3>
-                  
-                  {/* Overlay Play Button */}
-                  <div className="absolute inset-0 bg-black/10 group-hover:bg-black/20 transition-colors flex items-center justify-center opacity-0 group-hover:opacity-100">
-                    <button 
-                      className="w-8 h-8 md:w-10 md:h-10 lg:w-12 lg:h-12 rounded-full bg-white/20 backdrop-blur-md flex items-center justify-center hover:scale-105 transition-transform"
-                    >
-                      <Play className="w-3 h-3 md:w-4 md:h-4 lg:w-5 lg:h-5 fill-white ml-0.5 md:ml-1 text-white" />
-                    </button>
+          <LazySection minHeight={420}>
+            <div className="grid grid-cols-9 gap-4 md:gap-6 lg:gap-8 w-full px-4 md:px-8 lg:px-12 mb-8 md:mb-12">
+              {playlists.map((playlist, index) => (
+                <motion.div
+                  key={playlist.id}
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: index * 0.05 }}
+                  className="group cursor-pointer"
+                  onClick={() => router.push(`/playlist/${playlist.id}`)}
+                >
+                  {/* Card Image - Proportional size */}
+                  <div className={`relative w-full aspect-square rounded-lg overflow-hidden mb-2 shadow-lg ${shadowColors[playlist.id] || 'group-hover:shadow-white/20'} transition-all duration-300 bg-gradient-to-br ${playlist.gradient} flex items-center justify-center p-2`}>
+                    {/* Centered Title - Scaled down proportionally */}
+                    <h3 className="font-black text-white text-xs sm:text-sm md:text-base lg:text-lg xl:text-xl text-center leading-tight drop-shadow-md whitespace-pre-line group-hover:scale-110 transition-transform duration-300">
+                      {/* If title already contains newline, use it directly. Otherwise try to split by keywords. */}
+                      {playlist.title.includes('\n') 
+                        ? playlist.title 
+                        : playlist.title.replace(/榜单|歌手|歌单|热歌|民谣|金曲|古风|唛榜|排行/, (match) => `\n${match}`)
+                      }
+                    </h3>
+                    
+                    {/* Overlay Play Button */}
+                    <div className="absolute inset-0 bg-black/10 group-hover:bg-black/20 transition-colors flex items-center justify-center opacity-0 group-hover:opacity-100">
+                      <button 
+                        className="w-8 h-8 md:w-10 md:h-10 lg:w-12 lg:h-12 rounded-full bg-white/20 backdrop-blur-md flex items-center justify-center hover:scale-105 transition-transform"
+                      >
+                        <Play className="w-3 h-3 md:w-4 md:h-4 lg:w-5 lg:h-5 fill-white ml-0.5 md:ml-1 text-white" />
+                      </button>
+                    </div>
                   </div>
-                </div>
-              </motion.div>
-            ))}
-          </div>
+                </motion.div>
+              ))}
+            </div>
+          </LazySection>
         </div>
         )}
       </div>
