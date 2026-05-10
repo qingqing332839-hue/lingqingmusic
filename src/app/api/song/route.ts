@@ -26,9 +26,67 @@ function calculateOverlap(str1: string, str2: string): number {
     return overlap / shorter.length;
 }
 
+function normalizeForMatch(value: string): string {
+    return value
+        .toLowerCase()
+        .replace(/[\s"'`~!@#$%^&*()+=[\]{}|\\;:,.<>/?_\-·•，。！？、（）【】《》]/g, '');
+}
+
+function splitArtists(value: string): string[] {
+    return value
+        .split(/\/|&|,|、| feat\. | feat | ft\. | ft | x /i)
+        .map((item) => item.trim())
+        .filter(Boolean);
+}
+
+function calculateSimilarity(str1: string, str2: string): number {
+    const a = normalizeForMatch(str1);
+    const b = normalizeForMatch(str2);
+    if (!a || !b) return 0;
+    if (a === b) return 1;
+    if (a.includes(b) || b.includes(a)) {
+        return Math.min(a.length, b.length) / Math.max(a.length, b.length);
+    }
+    return calculateOverlap(a, b);
+}
+
+function scoreCandidate(candidate: any, expectedTitle: string, expectedArtist?: string | null) {
+    const titleScore = calculateSimilarity(candidate.title || '', expectedTitle);
+    const artistParts = expectedArtist ? splitArtists(expectedArtist) : [];
+    const artistScore = artistParts.length > 0
+        ? Math.max(...artistParts.map((part) => calculateSimilarity(candidate.artist || '', part)))
+        : 0;
+
+    let score = titleScore * 0.78 + artistScore * 0.22;
+    if (normalizeForMatch(candidate.title || '') === normalizeForMatch(expectedTitle)) {
+        score += 0.15;
+    }
+    return { score, titleScore, artistScore };
+}
+
+function pickBestStrictMatch(results: any[], expectedTitle: string, expectedArtist?: string | null) {
+    let best: any = null;
+    let bestScore = -1;
+
+    for (const candidate of results) {
+        const { score, titleScore, artistScore } = scoreCandidate(candidate, expectedTitle, expectedArtist);
+        const titlePassed = titleScore >= 0.72;
+        const artistPassed = !expectedArtist || artistScore >= 0.35;
+
+        if (titlePassed && artistPassed && score > bestScore) {
+            best = candidate;
+            bestScore = score;
+        }
+    }
+
+    return best;
+}
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const q = searchParams.get('q');
+  const title = searchParams.get('title');
+  const artist = searchParams.get('artist');
   
   // Optional: receive original ID to preserve it if needed
   const originalId = searchParams.get('id'); 
@@ -53,6 +111,31 @@ export async function GET(request: Request) {
     const cleanQ = q.replace(/[\(（].*?[\)）]/g, '').trim() || q;
     
     console.log(`[API] Searching for: "${cleanQ}" (Raw: "${q}")`);
+
+    if (title) {
+        const strictQuery = `${title}${artist ? ` ${artist}` : ''}`.trim();
+        const strictTasks = [
+            searchNetEase(strictQuery, true, 20),
+            searchKuGou(strictQuery, 20),
+            searchKuwo(strictQuery),
+            searchMigu(strictQuery)
+        ];
+
+        const settled = await Promise.allSettled(strictTasks);
+        const merged = settled.flatMap((item) => (
+            item.status === 'fulfilled' && Array.isArray(item.value) ? item.value : []
+        ));
+
+        const bestStrict = pickBestStrictMatch(merged, title, artist);
+        if (bestStrict) {
+            console.log(`[Strict Match] Found exact candidate: ${bestStrict.title} - ${bestStrict.artist}`);
+            if (originalId) bestStrict.id = originalId;
+            return NextResponse.json(bestStrict);
+        }
+
+        console.log(`[Strict Match] No reliable result for: ${title} - ${artist || 'Unknown'}`);
+        return NextResponse.json(null, { status: 404 });
+    }
 
     // --- Phase 1: Standard Search (Full Query) ---
     // Start all searches immediately and RACE them.

@@ -93,7 +93,9 @@ export const usePlayerStore = create<PlayerStore>()(
             const query = `${song.title} ${song.artist}`;
             
             // Call our unified song detail API
-            const res = await fetch(`/api/song?q=${encodeURIComponent(query)}&id=${song.id}`);
+            const res = await fetch(
+              `/api/song?q=${encodeURIComponent(query)}&title=${encodeURIComponent(song.title)}&artist=${encodeURIComponent(song.artist)}&id=${song.id}`
+            );
             
             if (res.ok) {
                 const fullSong = await res.json();
@@ -104,7 +106,13 @@ export const usePlayerStore = create<PlayerStore>()(
                         // Only update if the user hasn't switched songs in the meantime
                         if (state.currentSong?.id === song.id) {
                             // Merge the new details (src, lyric, cover, duration) into current song
-                            const updatedSong = { ...state.currentSong, ...fullSong };
+                            const updatedSong = {
+                                ...state.currentSong,
+                                cover: fullSong.cover || state.currentSong.cover,
+                                src: fullSong.src || state.currentSong.src,
+                                duration: fullSong.duration || state.currentSong.duration,
+                                lyric: fullSong.lyric || state.currentSong.lyric,
+                            };
                             
                             // Also update the song in the playlist to avoid re-fetching next time
                             const updatedPlaylist = state.playlist.map(s => s.id === song.id ? updatedSong : s);
