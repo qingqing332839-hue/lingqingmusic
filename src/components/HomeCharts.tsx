@@ -3,9 +3,10 @@
 import { useState, useEffect } from 'react'
 import { Play, ChevronRight, Loader2 } from 'lucide-react'
 import { useRouter } from 'next/navigation'
-import { Song, playlists } from '@/lib/data'
+import { Song } from '@/lib/data'
 import { usePlayerStore } from '@/lib/store'
 import { cn } from '@/lib/utils'
+import { getPlaylistFallback } from '@/lib/playlist-fallbacks'
 
 interface ChartData {
   id: string
@@ -23,7 +24,7 @@ const CHART_CONFIG = [
 
 function ChartCard({ chart }: { chart: ChartData }) {
   const router = useRouter()
-  const { playSong, currentSong, isPlaying } = usePlayerStore()
+  const { playSong, currentSong } = usePlayerStore()
 
   const handlePlayAll = (e: React.MouseEvent) => {
     e.stopPropagation()
@@ -32,7 +33,7 @@ function ChartCard({ chart }: { chart: ChartData }) {
     }
   }
 
-  const handlePlaySong = (e: React.MouseEvent, song: Song, index: number) => {
+  const handlePlaySong = (e: React.MouseEvent, song: Song) => {
     e.stopPropagation()
     // Play song with the rest of the chart as queue
     playSong(song, chart.songs)
@@ -71,7 +72,7 @@ function ChartCard({ chart }: { chart: ChartData }) {
           {chart.songs.slice(0, 3).map((song, index) => (
             <div 
               key={song.id}
-              onClick={(e) => handlePlaySong(e, song, index)}
+              onClick={(e) => handlePlaySong(e, song)}
               className="flex items-center gap-3 p-2 rounded-lg hover:bg-white/5 cursor-pointer group/item transition-colors"
             >
               {/* Cover - Hidden per request */}
@@ -137,12 +138,13 @@ export function HomeCharts() {
         const res = await fetch(`/api/playlist?id=${id}`)
         if (res.ok) {
           const data = await res.json()
-          return data.songs || []
+          const songs = data.songs || []
+          return songs.length > 0 ? songs : getPlaylistFallback(id)
         }
       } catch (e) {
         console.error(`Failed to fetch chart ${id}`, e)
       }
-      return []
+      return getPlaylistFallback(id)
     }
 
     // Fetch all in parallel

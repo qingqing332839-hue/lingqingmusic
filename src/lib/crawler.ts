@@ -4,7 +4,6 @@ import * as cheerio from 'cheerio';
 import crypto from 'crypto';
 import { fetchNetEasePlaylist } from './search-service';
 import { fetchMiguPlaylistSongs } from './migu-service';
-import { getPlaylistFallback } from './playlist-fallbacks';
 
 interface Song {
   id: string;
@@ -79,20 +78,6 @@ const generateId = (prefix: string, str: string) => {
 
 import { KTV_SONG_LIST } from './ktv-data';
 
-function withFallback(id: string, songs: Song[]): Song[] {
-  if (songs.length > 0) {
-    return songs;
-  }
-
-  const fallbackSongs = getPlaylistFallback(id);
-  if (fallbackSongs.length > 0) {
-    console.warn(`[playlist-fallback] using local fallback data for ${id}`);
-    return fallbackSongs;
-  }
-
-  return songs;
-}
-
 export async function fetchPlaylist(id: string): Promise<Song[]> {
   // Special handling for specific charts
   if (id === 'ktv') {
@@ -146,17 +131,17 @@ export async function fetchPlaylist(id: string): Promise<Song[]> {
       try {
           const miguSongs = await fetchMiguPlaylistSongs(id);
           // Ensure it matches our Song interface
-          return withFallback(id, miguSongs.map((s: any) => ({
+          return miguSongs.map((s: any) => ({
               id: s.id,
               title: s.title,
               artist: s.artist,
               cover: s.cover,
               src: s.src || '',
               duration: s.duration || '00:00'
-          })));
+          }));
       } catch (e) {
           console.error('Failed to fetch Migu playlist:', e);
-          return withFallback(id, []);
+          return [];
       }
   }
 
@@ -244,9 +229,9 @@ export async function fetchPlaylist(id: string): Promise<Song[]> {
         });
     }
 
-    return withFallback(id, songs);
+    return songs;
   } catch (error) {
     console.error(`Error fetching playlist ${id}:`, error);
-    return withFallback(id, []);
+    return [];
   }
 }

@@ -4,6 +4,15 @@ import { searchKuGou, searchNetEase, searchKuwo, searchMigu } from '@/lib/search
 
 export const dynamic = 'force-dynamic';
 
+const SONG_CACHE_TTL = 12 * 60 * 60 * 1000;
+
+type CachedSongResult = {
+    song: any | null;
+    expiresAt: number;
+};
+
+const songCache = new Map<string, CachedSongResult>();
+
 // Helper to check string similarity (Simple Character Overlap)
 // Returns overlap ratio (0.0 to 1.0)
 function calculateOverlap(str1: string, str2: string): number {
@@ -82,6 +91,27 @@ function pickBestStrictMatch(results: any[], expectedTitle: string, expectedArti
     return best;
 }
 
+function buildStrictCacheKey(title: string, artist?: string | null) {
+    return `${normalizeForMatch(title)}__${normalizeForMatch(artist || '')}`;
+}
+
+function readSongCache(key: string) {
+    const cached = songCache.get(key);
+    if (!cached) return undefined;
+    if (cached.expiresAt <= Date.now()) {
+        songCache.delete(key);
+        return undefined;
+    }
+    return cached.song;
+}
+
+function writeSongCache(key: string, song: any | null) {
+    songCache.set(key, {
+        song,
+        expiresAt: Date.now() + SONG_CACHE_TTL,
+    });
+}
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const q = searchParams.get('q');
@@ -113,27 +143,55 @@ export async function GET(request: Request) {
     console.log(`[API] Searching for: "${cleanQ}" (Raw: "${q}")`);
 
     if (title) {
+        const strictCacheKey = buildStrictCacheKey(title, artist);
+        const cachedSong = readSongCache(strictCacheKey);
+        if (cachedSong !== undefined) {
+            if (cachedSong && originalId) cachedSong.id = originalId;
+            return cachedSong
+                ? NextResponse.json(cachedSong)
+                : NextResponse.json(null, { status: 404 });
+        }
+
         const strictQuery = `${title}${artist ? ` ${artist}` : ''}`.trim();
-        const strictTasks = [
-            searchNetEase(strictQuery, true, 20),
-            searchKuGou(strictQuery, 20),
-            searchKuwo(strictQuery),
+        const fastTasks = [
+            searchNetEase(strictQuery, false, 12),
             searchMigu(strictQuery)
         ];
 
-        const settled = await Promise.allSettled(strictTasks);
-        const merged = settled.flatMap((item) => (
+        const fastSettled = await Promise.allSettled(fastTasks);
+        const fastMerged = fastSettled.flatMap((item) => (
             item.status === 'fulfilled' && Array.isArray(item.value) ? item.value : []
         ));
 
-        const bestStrict = pickBestStrictMatch(merged, title, artist);
-        if (bestStrict) {
+        const fastStrict = pickBestStrictMatch(fastMerged, title, artist);
+        if (fastStrict && fastStrict.src) {
+            console.log(`[Strict Match Fast] Found candidate: ${fastStrict.title} - ${fastStrict.artist}`);
+            writeSongCache(strictCacheKey, fastStrict);
+            if (originalId) fastStrict.id = originalId;
+            return NextResponse.json(fastStrict);
+        }
+
+        const slowTasks = [
+            searchKuGou(strictQuery, 12),
+            searchKuwo(strictQuery),
+            searchNetEase(strictQuery, true, 8),
+        ];
+
+        const slowSettled = await Promise.allSettled(slowTasks);
+        const slowMerged = slowSettled.flatMap((item) => (
+            item.status === 'fulfilled' && Array.isArray(item.value) ? item.value : []
+        ));
+
+        const bestStrict = pickBestStrictMatch([...fastMerged, ...slowMerged], title, artist);
+        if (bestStrict && bestStrict.src) {
             console.log(`[Strict Match] Found exact candidate: ${bestStrict.title} - ${bestStrict.artist}`);
+            writeSongCache(strictCacheKey, bestStrict);
             if (originalId) bestStrict.id = originalId;
             return NextResponse.json(bestStrict);
         }
 
         console.log(`[Strict Match] No reliable result for: ${title} - ${artist || 'Unknown'}`);
+        writeSongCache(strictCacheKey, null);
         return NextResponse.json(null, { status: 404 });
     }
 

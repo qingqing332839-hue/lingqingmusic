@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Song } from '@/lib/data';
 import { Loader2 } from 'lucide-react';
+import { getPlaylistFallback } from '@/lib/playlist-fallbacks';
 
 interface RankChart {
   id: string;
@@ -49,7 +50,6 @@ export default function QQRankList() {
   const router = useRouter();
   const [chartData, setChartData] = useState<Record<string, Song[]>>({});
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
 
   const [mounted, setMounted] = useState(false);
 
@@ -62,12 +62,13 @@ export default function QQRankList() {
         const promises = RANK_CHARTS.map(async (chart) => {
           try {
             const res = await fetch(`/api/playlist?id=${chart.id}`);
-            if (!res.ok) return { id: chart.id, songs: [] };
+            if (!res.ok) return { id: chart.id, songs: getPlaylistFallback(chart.id) };
             const data = await res.json();
-            return { id: chart.id, songs: (data && Array.isArray(data.songs)) ? data.songs : [] };
+            const songs = (data && Array.isArray(data.songs)) ? data.songs : [];
+            return { id: chart.id, songs: songs.length > 0 ? songs : getPlaylistFallback(chart.id) };
           } catch (err) {
             console.error(`Failed to fetch ${chart.id}`, err);
-            return { id: chart.id, songs: [] };
+            return { id: chart.id, songs: getPlaylistFallback(chart.id) };
           }
         });
 
@@ -100,7 +101,6 @@ export default function QQRankList() {
 
   // Prevent hydration mismatch and ensure client-side only rendering
   if (!mounted) return null;
-  if (error) return null;
 
   return (
     <div className="w-full px-4 md:px-8">
