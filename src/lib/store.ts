@@ -324,6 +324,9 @@ export const usePlayerStore = create<PlayerStore>()(
         state?.setHasHydrated(true)
       },
       partialize: (state) => ({ 
+        currentSong: state.currentSong,
+        playlist: state.playlist,
+        isPlaying: state.isPlaying,
         volume: state.volume, 
         mode: state.mode, 
         favorites: state.favorites,

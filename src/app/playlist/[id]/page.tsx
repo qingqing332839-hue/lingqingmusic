@@ -2,7 +2,7 @@
 'use client'
 
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
-import { Play, ArrowLeft, Clock, Disc, ListPlus, ListVideo, Loader2, Heart } from 'lucide-react'
+import { Play, ArrowLeft, Disc, ListPlus, ListVideo, Heart } from 'lucide-react'
 import { usePlayerStore } from '@/lib/store'
 import { playlists, Song } from '@/lib/data'
 import { motion } from 'framer-motion'
@@ -190,7 +190,7 @@ export default function PlaylistPage() {
                         className="flex items-center gap-4"
                     >
                          <button 
-                            onClick={() => router.back()}
+                            onClick={() => router.push('/')}
                             className="p-3 rounded-full bg-white/10 hover:bg-white/20 backdrop-blur-md transition-colors"
                          >
                             <ArrowLeft className="w-5 h-5" strokeWidth={3} />
