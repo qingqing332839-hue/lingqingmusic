@@ -7,8 +7,8 @@ import { ToastProvider } from '@/components/ui/Toast'
 const inter = Inter({ subsets: ['latin'] })
 
 export const metadata: Metadata = {
-  title: 'Neon Music',
-  description: 'A futuristic music experience',
+  title: '聆清音乐',
+  description: '好的声音，期待你的聆听',
   referrer: 'no-referrer',
 }
 

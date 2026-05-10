@@ -12,14 +12,17 @@ export async function GET(request: Request) {
     return NextResponse.json({ results: [] });
   }
 
-  // Parallel search
-  const [kgResults, neResults] = await Promise.all([
-    searchKuGou(q),
-    searchNetEase(q)
+  // Use "Loose" Search for Dropdown (Maximum Results)
+  // Parallel execution for speed
+  // Increase limits to get more results (e.g. 100 + 100)
+  const [neResults, kgResults] = await Promise.all([
+    searchNetEase(q, false, 100), // validate=false for speed & quantity, limit 100
+    searchKuGou(q, 100)           // limit 100
   ]);
 
-  // Combine results (KuGou first as per priority)
-  const combined = [...kgResults, ...neResults];
+  // Combine: NetEase first, then KuGou
+  // Deduplicate by ID? No need, UI handles it.
+  const combined = [...neResults, ...kgResults];
 
   return NextResponse.json({ results: combined });
 }

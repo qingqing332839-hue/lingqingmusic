@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { persist } from 'zustand/middleware'
 
 interface Song {
   id: string
@@ -15,7 +16,16 @@ export type PlaybackMode = 'sequence' | 'random' | 'repeat'
 interface PlayerStore {
   currentSong: Song | null
   playlist: Song[] // Current playlist queue
+  favorites: Song[] // User favorite songs
+  history: Song[] // Listening history
+  dailySongs: Song[] // Daily recommendation list
+  fmSongs: Song[] // Private FM list
+  addictiveSongs: Song[] // Addictive Radio list
+  discoverySongs: Song[] // Hear Different list
+  searchHistory: string[] // Search history
+  lastDailyDate: string // Date of last daily recommendation generation (YYYY-MM-DD)
   isPlaying: boolean
+  hasHydrated: boolean // Whether the store has been rehydrated from storage
   volume: number
   mode: PlaybackMode
   playSong: (song: Song, queue?: Song[]) => Promise<void>
@@ -25,19 +35,47 @@ interface PlayerStore {
   setMode: (mode: PlaybackMode) => void
   playNext: () => void
   playPrev: () => void
+  playNextSameName: (song: Song) => Promise<void>
   addToQueue: (song: Song) => void
   addToPlaylist: (song: Song) => void
   removeFromPlaylist: (songId: string) => void
   setPlaylist: (playlist: Song[]) => void
+  toggleFavorite: (song: Song) => void
+  isFavorite: (songId: string) => boolean
+  addToHistory: (song: Song) => void
+  addToSearchHistory: (query: string) => void
+  clearSearchHistory: () => void
+  setDailySongs: (songs: Song[]) => void
+  setFmSongs: (songs: Song[]) => void
+  setAddictiveSongs: (songs: Song[]) => void
+  setDiscoverySongs: (songs: Song[]) => void
+  setHasHydrated: (hydrated: boolean) => void
 }
 
-export const usePlayerStore = create<PlayerStore>((set, get) => ({
-  currentSong: null,
-  playlist: [],
-  isPlaying: false,
-  volume: 1, // Default volume 100%
-  mode: 'sequence',
-  playSong: async (song, queue) => {
+export const usePlayerStore = create<PlayerStore>()(
+  persist(
+    (set, get) => ({
+      currentSong: null,
+      playlist: [],
+      favorites: [],
+      history: [],
+      dailySongs: [],
+      fmSongs: [],
+      addictiveSongs: [],
+      discoverySongs: [],
+      searchHistory: [],
+      lastDailyDate: '',
+      isPlaying: false,
+      hasHydrated: false,
+      volume: 1, // Default volume 100%
+      mode: 'sequence',
+      playSong: async (song, queue) => {
+    if (!song) return; // Gracefully exit if song is null or undefined
+
+    // Add to history whenever a song starts playing
+    const { addToHistory } = get();
+    addToHistory(song);
+
     // 1. Set basic state optimistically
     set((state) => ({ 
       currentSong: song, 
@@ -71,9 +109,19 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
                             // Also update the song in the playlist to avoid re-fetching next time
                             const updatedPlaylist = state.playlist.map(s => s.id === song.id ? updatedSong : s);
 
+                            // Update other lists if they contain this song (to sync cover/details)
+                            const updatedDailySongs = state.dailySongs.map(s => s.id === song.id ? updatedSong : s);
+                            const updatedFmSongs = state.fmSongs.map(s => s.id === song.id ? updatedSong : s);
+                            const updatedAddictiveSongs = state.addictiveSongs.map(s => s.id === song.id ? updatedSong : s);
+                            const updatedDiscoverySongs = state.discoverySongs.map(s => s.id === song.id ? updatedSong : s);
+
                             return {
                                 currentSong: updatedSong,
-                                playlist: updatedPlaylist
+                                playlist: updatedPlaylist,
+                                dailySongs: updatedDailySongs,
+                                fmSongs: updatedFmSongs,
+                                addictiveSongs: updatedAddictiveSongs,
+                                discoverySongs: updatedDiscoverySongs
                             };
                         }
                         return {};
@@ -149,7 +197,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
   setVolume: (volume) => set({ volume }),
   setMode: (mode) => set({ mode }),
   playNext: () => {
-    const { playlist, currentSong, mode } = get()
+    const { playlist, currentSong, mode, playSong } = get()
     if (!currentSong || playlist.length === 0) return
     
     // Repeat Single Mode: Just restart current song
@@ -165,21 +213,21 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     // Random Mode
     if (mode === 'random') {
         const nextIndex = Math.floor(Math.random() * playlist.length)
-        set({ currentSong: { ...playlist[nextIndex] }, isPlaying: true })
+        playSong(playlist[nextIndex])
         return
     }
 
     // Sequence Mode
     const currentIndex = playlist.findIndex(s => s.id === currentSong.id)
     if (currentIndex === -1) {
-        if (playlist.length > 0) set({ currentSong: { ...playlist[0] }, isPlaying: true })
+        if (playlist.length > 0) playSong(playlist[0])
         return
     }
     const nextIndex = (currentIndex + 1) % playlist.length
-    set({ currentSong: { ...playlist[nextIndex] }, isPlaying: true })
+    playSong(playlist[nextIndex])
   },
   playPrev: () => {
-    const { playlist, currentSong, mode } = get()
+    const { playlist, currentSong, mode, playSong } = get()
     if (!currentSong || playlist.length === 0) return
     
     if (mode === 'repeat') {
@@ -193,7 +241,7 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
 
     if (mode === 'random') {
         const prevIndex = Math.floor(Math.random() * playlist.length)
-        set({ currentSong: { ...playlist[prevIndex] }, isPlaying: true })
+        playSong(playlist[prevIndex])
         return
     }
     
@@ -201,7 +249,92 @@ export const usePlayerStore = create<PlayerStore>((set, get) => ({
     if (currentIndex === -1) return
 
     const prevIndex = (currentIndex - 1 + playlist.length) % playlist.length
-    set({ currentSong: { ...playlist[prevIndex] }, isPlaying: true })
+    playSong(playlist[prevIndex])
   },
-  setPlaylist: (playlist) => set({ playlist })
-}))
+  playNextSameName: async (failedSong) => {
+    const { playlist, playSong, playNext } = get()
+    console.log(`[Smart Recovery] Attempting to find replacement for: ${failedSong.title}`)
+
+    // 1. Try finding same name song in current playlist (different ID)
+    const sameNameSong = playlist.find(s => s.title === failedSong.title && s.id !== failedSong.id)
+    if (sameNameSong) {
+        console.log(`[Smart Recovery] Found same name song in playlist: ${sameNameSong.title}`)
+        playSong(sameNameSong)
+        return
+    }
+
+    // 2. Try fetching a new version via Fuzzy Search (Title only)
+    try {
+        const res = await fetch(`/api/song?q=${encodeURIComponent(failedSong.title)}`)
+        if (res.ok) {
+            const altSong = await res.json()
+            if (altSong && altSong.id !== failedSong.id && altSong.src) {
+                 console.log(`[Smart Recovery] Found alternative: ${altSong.title} (${altSong.artist})`)
+                 
+                 // Replace the failed song in playlist with this new working one
+                 const newPlaylist = playlist.map(s => s.id === failedSong.id ? altSong : s)
+                 set({ playlist: newPlaylist })
+                 
+                 // Play it!
+                 playSong(altSong)
+                 return
+            }
+        }
+    } catch (e) {
+        console.error("Smart recovery failed", e)
+    }
+    
+    // 3. Fallback: If all else fails, just play next (original behavior)
+    console.warn(`[Smart Recovery] No alternative found, skipping to next song.`)
+    playNext()
+  },
+  setPlaylist: (playlist) => set({ playlist }),
+      toggleFavorite: (song) => set((state) => {
+        const isFav = state.favorites.some(s => s.id === song.id)
+        if (isFav) {
+          return { favorites: state.favorites.filter(s => s.id !== song.id) }
+        } else {
+          return { favorites: [...state.favorites, song] }
+        }
+      }),
+      isFavorite: (songId) => get().favorites.some(s => s.id === songId),
+      addToHistory: (song) => set((state) => {
+        // Keep unique songs, most recent first, limit to 200
+        const newHistory = [song, ...state.history.filter(s => s.id !== song.id)].slice(0, 200);
+        return { history: newHistory };
+      }),
+      addToSearchHistory: (query) => set((state) => {
+        if (!query.trim()) return {};
+        const newHistory = [query, ...state.searchHistory.filter(q => q !== query)].slice(0, 20);
+        return { searchHistory: newHistory };
+      }),
+      clearSearchHistory: () => set({ searchHistory: [] }),
+      setDailySongs: (songs) => set({ 
+        dailySongs: songs, 
+        lastDailyDate: new Date().toISOString().split('T')[0] 
+      }),
+      setFmSongs: (songs) => set({ fmSongs: songs }),
+      setAddictiveSongs: (songs) => set({ addictiveSongs: songs }),
+      setDiscoverySongs: (songs) => set({ discoverySongs: songs }),
+      setHasHydrated: (hydrated) => set({ hasHydrated: hydrated }),
+    }),
+    {
+      name: 'player-storage',
+      onRehydrateStorage: () => (state) => {
+        state?.setHasHydrated(true)
+      },
+      partialize: (state) => ({ 
+        volume: state.volume, 
+        mode: state.mode, 
+        favorites: state.favorites,
+        history: state.history,
+        dailySongs: state.dailySongs,
+        fmSongs: state.fmSongs,
+        addictiveSongs: state.addictiveSongs,
+        discoverySongs: state.discoverySongs,
+        lastDailyDate: state.lastDailyDate,
+        searchHistory: state.searchHistory
+      })
+    }
+  )
+)

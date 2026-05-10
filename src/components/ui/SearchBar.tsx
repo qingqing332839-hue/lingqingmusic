@@ -1,7 +1,7 @@
 
 'use client'
 
-import { Search, X, Loader2, ListVideo, ListPlus } from 'lucide-react'
+import { Search, X, Loader2, ListVideo, ListPlus, Trash2 } from 'lucide-react'
 import { useState, useEffect, useRef } from 'react'
 import { playlists, Song } from '@/lib/data'
 import { usePlayerStore } from '@/lib/store'
@@ -30,14 +30,14 @@ function CoverImage({ src, alt, className }: { src: string, alt: string, classNa
   );
 }
 
-export function SearchBar() {
+export function SearchBar({ onSearchSubmit }: { onSearchSubmit?: (query: string) => void }) {
   const [query, setQuery] = useState('')
   const [isOpen, setIsOpen] = useState(false)
   const [remoteResults, setRemoteResults] = useState<Song[]>([])
   const [isSearching, setIsSearching] = useState(false)
   
   const containerRef = useRef<HTMLDivElement>(null)
-  const { playSong, addToQueue, addToPlaylist } = usePlayerStore()
+  const { playSong, addToQueue, addToPlaylist, searchHistory, addToSearchHistory, clearSearchHistory } = usePlayerStore()
   const closeTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
   const handleOpen = () => {
@@ -115,17 +115,19 @@ export function SearchBar() {
     // In our current setup, search results (remoteResults) come from /api/search which calls searchMusic -> searchNetEase/searchKuGou.
     // These services DO return covers.
     
+    addToSearchHistory(query)
     playSong(song, [song]) 
     setIsOpen(false)
     setQuery('') 
   }
 
   const hasResults = filteredSongs.length > 0 || remoteResults.length > 0;
+  const showDropdown = isOpen && ((query && (hasResults || isSearching)) || (!query && searchHistory.length > 0))
 
   return (
     <div 
       ref={containerRef} 
-      className="relative w-full max-w-md mx-auto group z-50"
+      className="relative w-full mx-auto group z-[1500]"
       onMouseEnter={handleOpen}
       onMouseLeave={handleClose}
     >
@@ -138,8 +140,23 @@ export function SearchBar() {
          onChange={(e) => {
            setQuery(e.target.value)
            handleOpen() // Force open on input change
+           // If query is empty, maybe trigger empty search submit to clear results?
+           if (e.target.value === '' && onSearchSubmit) {
+              onSearchSubmit('');
+           }
          }}
-         className="block w-full p-4 pl-10 pr-10 text-sm text-white border border-zinc-500 rounded-full bg-zinc-800/30 placeholder-zinc-500 outline-none transition-all focus:ring-0 focus:border-zinc-400 focus:bg-zinc-800/60 focus:brightness-110 opacity-70 focus:opacity-100" 
+         onFocus={handleOpen}
+         onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                setIsOpen(false); // Close dropdown on submit
+                addToSearchHistory(query)
+                if (onSearchSubmit) {
+                    onSearchSubmit(query);
+                }
+            }
+         }}
+         className="block w-full p-4 pl-10 pr-10 text-sm text-white rounded-full bg-zinc-800/50 placeholder-zinc-400 outline-none transition-all focus:ring-0 opacity-90 focus:opacity-100" 
          placeholder="搜索歌曲、歌手..." 
          required 
        />
@@ -149,7 +166,7 @@ export function SearchBar() {
         <button 
           onClick={() => {
             setQuery('')
-            setIsOpen(false)
+            setIsOpen(true) // Keep open to show history
             setRemoteResults([])
           }}
           className="absolute inset-y-0 right-3 flex items-center justify-center"
@@ -162,16 +179,49 @@ export function SearchBar() {
 
       {/* Dropdown Results */}
       <AnimatePresence>
-        {isOpen && query && (hasResults || isSearching) && (
+        {showDropdown && (
           <motion.div
             initial={{ opacity: 0, y: 10, scale: 0.95 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 10, scale: 0.95 }}
             transition={{ duration: 0.2 }}
-            className="absolute z-50 w-full mt-2 bg-zinc-900/95 backdrop-blur-xl border border-zinc-700/50 rounded-xl shadow-2xl overflow-hidden max-h-[80vh] overflow-y-auto"
+            className="absolute z-[1501] w-full mt-2 bg-zinc-900/95 backdrop-blur-xl border border-zinc-700/50 rounded-xl shadow-2xl overflow-hidden max-h-[80vh] overflow-y-auto overscroll-contain"
           >
+            {/* History Section */}
+            {!query && searchHistory.length > 0 && (
+              <div className="p-4 border-b border-zinc-800/50">
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-xs font-semibold text-zinc-500 uppercase tracking-wider">搜索历史</span>
+                  <button 
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      clearSearchHistory();
+                    }}
+                    className="p-1 hover:bg-white/10 rounded-full transition-colors group/trash"
+                    title="清空历史"
+                  >
+                    <Trash2 className="w-4 h-4 text-zinc-500 group-hover/trash:text-red-400 transition-colors" />
+                  </button>
+                </div>
+                <div className="flex flex-wrap gap-2 max-h-[80px] overflow-hidden">
+                  {searchHistory.map((term, index) => (
+                    <button
+                      key={index}
+                      onClick={() => {
+                        setQuery(term);
+                        // Trigger search immediately by setting query
+                      }}
+                      className="px-3 py-1 bg-zinc-800 hover:bg-zinc-700 text-xs text-zinc-300 rounded-full transition-colors truncate max-w-[150px]"
+                    >
+                      {term}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Local Results */}
-            {filteredSongs.length > 0 && (
+            {query && filteredSongs.length > 0 && (
               <div className="py-2">
                 <div className="px-4 py-2 text-xs font-semibold text-zinc-500 uppercase tracking-wider">
                   本地结果
@@ -230,7 +280,7 @@ export function SearchBar() {
             )}
 
             {/* Remote Results */}
-            {(remoteResults.length > 0 || isSearching) && (
+            {query && (remoteResults.length > 0 || isSearching) && (
                <div className="py-2 border-t border-zinc-800/50">
                 <div className="px-4 py-2 text-xs font-semibold text-zinc-500 uppercase tracking-wider flex items-center justify-between">
                   <span>全网搜索结果</span>
@@ -284,9 +334,7 @@ export function SearchBar() {
                             </Tooltip>
                           </div>
                           
-                          <div className="text-xs text-zinc-500 ml-auto min-w-[32px] text-right">
-                             {song.id.startsWith('kg') ? '酷狗' : song.id.startsWith('ne') ? '网易' : '网络'}
-                          </div>
+
                         </div>
                       </li>
                     ))}

@@ -14,6 +14,8 @@ interface LyricsViewProps {
   onSeek: (time: number) => void
   isPlaying: boolean
   onTogglePlay: () => void
+  audioRef?: React.RefObject<HTMLAudioElement | null>
+  isCoverLoaded: boolean
 }
 
 export function LyricsView({
@@ -23,18 +25,22 @@ export function LyricsView({
   currentTime,
   onSeek,
   isPlaying,
-  onTogglePlay
+  onTogglePlay,
+  audioRef,
+  isCoverLoaded
 }: LyricsViewProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [lyrics, setLyrics] = useState<{ time: number; text: string }[]>([])
   const [activeIndex, setActiveIndex] = useState(0)
   const [isUserScrolling, setIsUserScrolling] = useState(false)
-  const [isCoverLoaded, setIsCoverLoaded] = useState(false)
+
   const scrollTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const hasInitialScrolled = useRef(false)
+  const rafRef = useRef<number | null>(null)
 
   // Parse lyrics
   useEffect(() => {
-    setIsCoverLoaded(false) // Reset loading state when song changes
+    hasInitialScrolled.current = false // Reset when song changes
     if (currentSong?.lyric) {
       const parsed = currentSong.lyric
         .split('\n')
@@ -58,46 +64,86 @@ export function LyricsView({
     }
   }, [currentSong])
 
-  // Find active lyric
+  // Revert to event-driven updates (simpler, smoother)
+  // Only scroll when activeIndex changes or on Seek
   useEffect(() => {
+    // 1. Find index
     const index = lyrics.findIndex((line, i) => {
       const nextLine = lyrics[i + 1]
       return currentTime >= line.time && (!nextLine || currentTime < nextLine.time)
     })
     
+    // 2. Handle Index Change (Smooth Scroll)
     if (index !== -1 && index !== activeIndex) {
       setActiveIndex(index)
-      
       if (!isUserScrolling && containerRef.current) {
-        scrollToIndex(index)
+         scrollToIndex(index, 'smooth')
       }
+    } else if (index !== -1 && !isUserScrolling && containerRef.current) {
+        // 3. Handle Seek / Time Jump (Instant Snap)
+        // If we are at the correct index, but the scroll position is wildly off (e.g. user seeked within the same long line or instrumental),
+        // we should snap.
+        // Or simply: check if currentTime changed significantly from last known time?
+        // Easier approach: Check physical distance.
+        const container = containerRef.current;
+        const targetEl = container.children[index] as HTMLElement;
+        if (targetEl) {
+             const containerHeight = container.clientHeight
+             const elTop = targetEl.offsetTop
+             const elHeight = targetEl.offsetHeight
+             const targetScroll = elTop - (containerHeight * 0.4) + (elHeight / 2)
+             
+             // If distance is large (> 200px), it means we likely seeked or just opened. Snap.
+             if (Math.abs(container.scrollTop - targetScroll) > 200) {
+                 container.scrollTo({ top: targetScroll, behavior: 'auto' }) // Instant
+             }
+             // Otherwise do nothing. Let the 'smooth' scroll from index change handle it.
+             // This avoids the "jitter" of constant updates.
+        }
     }
   }, [currentTime, lyrics, isUserScrolling, activeIndex])
 
-  const scrollToIndex = (index: number) => {
+  // Removed RAF loop logic
+
+
+  // Helper for manual clicks or initial load
+  const scrollToIndex = (index: number, behavior: ScrollBehavior = 'smooth') => {
     if (!containerRef.current) return
     const container = containerRef.current
-    const activeEl = container.children[index] as HTMLElement
-    if (activeEl) {
-      // Calculate target position to center the element
+    
+    // Direct children are the <p> tags
+    const targetEl = container.children[index] as HTMLElement
+    
+    if (targetEl) {
       const containerHeight = container.clientHeight
-      const elTop = activeEl.offsetTop
-      const elHeight = activeEl.offsetHeight
+      const elTop = targetEl.offsetTop
+      const elHeight = targetEl.offsetHeight
       
-      // Target scroll position = element top - (half container height) + (half element height)
-      // Shift up by 1/4 of container height: add (containerHeight / 4) to scroll target (scrolling more down reveals lower content, so to move content UP, we scroll DOWN? No.)
-      // To move the active element UP relative to the viewport, we need to scroll DOWN (increase scrollTop).
-      // Wait, let's visualize:
-      // scrollTop = 0 => element is at top.
-      // We want element to be at 1/4 from top instead of 1/2 from top.
-      // Center position: scrollTop = elTop - containerHeight/2 + elHeight/2
-      // 1/4 from top position: scrollTop = elTop - containerHeight/4 + elHeight/2
-      // Let's try adjusting the offset.
+      // Calculate scroll position to center the active line (slightly above center for better readability)
       const target = elTop - (containerHeight * 0.4) + (elHeight / 2)
       
-      container.scrollTo({ top: target, behavior: 'smooth' })
+      container.scrollTo({ top: target, behavior })
     }
   }
+
+  // Initial scroll when opening
+  useEffect(() => {
+    if (isOpen && lyrics.length > 0 && !hasInitialScrolled.current) {
+       // Find current index immediately
+       const index = lyrics.findIndex((line, i) => {
+        const nextLine = lyrics[i + 1]
+        return currentTime >= line.time && (!nextLine || currentTime < nextLine.time)
+      })
+
+      if (index !== -1) {
+          hasInitialScrolled.current = true
+          // Instant jump to position
+          setTimeout(() => {
+              scrollToIndex(index, 'instant' as ScrollBehavior)
+          }, 100)
+      }
+    }
+  }, [isOpen, lyrics, currentTime])
 
   const handleLyricClick = (time: number, index: number) => {
     onSeek(time)
@@ -107,7 +153,7 @@ export function LyricsView({
     if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current)
     
     // Immediate scroll to target
-    scrollToIndex(index)
+    scrollToIndex(index, 'smooth')
   }
 
 
@@ -132,7 +178,7 @@ export function LyricsView({
           animate={{ opacity: 1, y: 0 }}
           exit={{ opacity: 0, y: '100%' }}
           transition={{ type: "spring", damping: 25, stiffness: 200 }}
-          className="fixed inset-0 z-50 bg-[#121212]/95 backdrop-blur-xl text-white flex flex-col md:flex-row overflow-hidden"
+          className="fixed inset-0 z-[2000] bg-[#121212]/95 backdrop-blur-xl text-white flex flex-col md:flex-row overflow-hidden"
         >
           <div className="absolute inset-0 pointer-events-none z-0">
             <div 
@@ -164,11 +210,6 @@ export function LyricsView({
                   "w-full h-full object-cover transition-opacity duration-500",
                   isCoverLoaded ? "opacity-100" : "opacity-0"
                 )}
-                onLoad={() => setIsCoverLoaded(true)}
-                onError={(e) => {
-                  setIsCoverLoaded(false);
-                  e.currentTarget.style.display = 'none';
-                }}
               />
               {/* Play/Pause Overlay */}
               {isCoverLoaded && (
@@ -201,7 +242,7 @@ export function LyricsView({
             <div 
               ref={containerRef}
               onScroll={handleScroll}
-              className="h-full w-full overflow-y-auto scrollbar-hide px-8 py-[40vh] text-center"
+              className="h-full w-full overflow-y-auto scrollbar-hide px-8 py-[40vh] text-center overscroll-contain"
             >
               {lyrics.length > 0 ? (
                 lyrics.map((line, i) => {

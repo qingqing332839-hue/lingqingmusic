@@ -4,7 +4,7 @@ import { useState, useRef, useEffect } from 'react'
 import { usePlayerStore } from '@/lib/store'
 import { ProgressBar } from './ProgressBar'
 import { LyricsView } from './LyricsView'
-import { Play, SkipBack, SkipForward, ListMusic, Trash2, Repeat, Repeat1, Shuffle, ChevronDown, ListVideo, X } from 'lucide-react'
+import { Play, SkipBack, SkipForward, ListMusic, Trash2, Repeat, Repeat1, Shuffle, ChevronDown, ListVideo, X, Heart } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { cn } from '@/lib/utils'
 
@@ -29,7 +29,10 @@ export function Player() {
     mode,
     setMode,
     addToQueue,
-    removeFromPlaylist
+    removeFromPlaylist,
+    playNextSameName,
+    toggleFavorite,
+    isFavorite
   } = usePlayerStore()
   const audioRef = useRef<HTMLAudioElement>(null)
   const [currentTime, setCurrentTime] = useState(0)
@@ -37,11 +40,30 @@ export function Player() {
   const [showLyrics, setShowLyrics] = useState(false)
   const [showPlaylist, setShowPlaylist] = useState(false)
   const [isCoverLoaded, setIsCoverLoaded] = useState(false)
+  const [isLoading, setIsLoading] = useState(false)
   
+  // Playback timeout logic: Skip if loading > 10s (increased from 3s to allow backend fallback)
+  useEffect(() => {
+    let timeout: any;
+
+    if (isLoading && currentSong) {
+      timeout = setTimeout(() => {
+        console.warn(`Playback timeout for "${currentSong.title}", skipping to next similar song...`);
+        // Use smart recovery instead of just playNext
+        playNextSameName(currentSong);
+      }, 10000); // 10 seconds timeout
+    }
+
+    return () => {
+      if (timeout) clearTimeout(timeout);
+    };
+  }, [isLoading, currentSong, playNextSameName]);
+
   // Reset error when song changes
   useEffect(() => {
     setCurrentTime(0)
     setIsCoverLoaded(false) // Reset loading state when song changes
+    setIsLoading(true) // Start loading when song changes
   }, [currentSong])
 
   // Sync volume with audio element
@@ -58,7 +80,9 @@ export function Player() {
         const playPromise = audioRef.current.play()
         if (playPromise !== undefined) {
           playPromise.catch((e) => {
-            console.error("Playback failed:", e)
+            if (e.name !== 'AbortError') {
+              console.error("Playback failed:", e)
+            }
           })
         }
       } else {
@@ -71,6 +95,11 @@ export function Player() {
     if (audioRef.current) {
       setCurrentTime(audioRef.current.currentTime)
       setDuration(audioRef.current.duration || 0)
+      
+      // Force stop loading if music is playing
+      if (isLoading && audioRef.current.currentTime > 0) {
+        setIsLoading(false)
+      }
     }
   }
 
@@ -121,7 +150,7 @@ export function Player() {
       {/* Full Screen Backdrop for Playlist Closing */}
       {showPlaylist && (
         <div 
-          className="fixed inset-0 z-[60] bg-transparent"
+          className="fixed inset-0 z-[2002] bg-transparent"
           onClick={() => setShowPlaylist(false)}
         />
       )}
@@ -135,6 +164,8 @@ export function Player() {
         onSeek={handleSeek}
         isPlaying={isPlaying}
         onTogglePlay={togglePlay}
+        audioRef={audioRef}
+        isCoverLoaded={isCoverLoaded}
       />
 
       {/* Playlist Popup */}
@@ -145,7 +176,7 @@ export function Player() {
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 20, scale: 0.95 }}
             transition={{ duration: 0.2 }}
-            className="fixed bottom-[90px] right-4 w-96 max-h-[calc(100vh-120px)] bg-[#121212] rounded-xl shadow-2xl flex flex-col z-[70] overflow-hidden"
+            className="fixed bottom-[90px] right-4 w-96 max-h-[calc(100vh-120px)] bg-[#121212] rounded-xl shadow-2xl flex flex-col z-[2003] overflow-hidden"
           >
             {/* Header */}
             <div className="p-4 bg-[#121212] backdrop-blur-md flex items-center justify-between sticky top-0 z-10">
@@ -163,7 +194,7 @@ export function Player() {
             </div>
             
             {/* List */}
-            <div className="flex-1 overflow-y-auto p-2 space-y-1 scrollbar-thin scrollbar-thumb-zinc-700 scrollbar-track-transparent">
+            <div className="flex-1 overflow-y-auto p-2 space-y-1 scrollbar-thin scrollbar-thumb-zinc-700 scrollbar-track-transparent overscroll-contain">
               {playlist.map((song, index) => {
                 const isCurrent = currentSong.id === song.id
                 return (
@@ -248,7 +279,7 @@ export function Player() {
 
       {/* Main Player Bar */}
       <div 
-        className="fixed bottom-0 left-0 right-0 bg-[#121212] border-t border-zinc-900 pb-safe z-50"
+        className="fixed bottom-0 left-0 right-0 bg-[#121212] border-t border-zinc-900 pb-safe z-[2001]"
         onClick={(e) => {
             // Prevent clicks on the bar from closing the playlist (optional, but good UX)
             // e.stopPropagation() 
@@ -274,13 +305,25 @@ export function Player() {
             ref={audioRef}
             key={currentSong.id}
             src={currentSong.src}
+            // @ts-ignore
+            referrerPolicy="no-referrer"
+            // crossOrigin removed to avoid strict CORS errors with non-CORS audio sources
             onEnded={playNext}
             onPause={() => setIsPlaying(false)}
-            onPlay={() => setIsPlaying(true)}
+            onPlay={() => {
+                setIsPlaying(true)
+                setIsLoading(false)
+            }}
+            onPlaying={() => setIsLoading(false)}
+            onWaiting={() => setIsLoading(true)}
+            onCanPlay={() => setIsLoading(false)}
+            onLoadedData={() => setIsLoading(false)}
+            onCanPlayThrough={() => setIsLoading(false)}
             onTimeUpdate={handleTimeUpdate}
             onError={() => {
-                console.error("Audio error, skipping to next")
-                playNext()
+                console.error("Audio error, attempting smart recovery")
+                setIsLoading(false)
+                playNextSameName(currentSong)
             }}
         />
 
@@ -329,6 +372,23 @@ export function Player() {
                         {currentSong.artist}
                     </p>
                 </div>
+                
+                {/* Favorite Button */}
+                <button
+                    onClick={(e) => {
+                        e.stopPropagation();
+                        toggleFavorite(currentSong);
+                    }}
+                    className={cn(
+                        "p-2 rounded-full transition-colors",
+                        isFavorite(currentSong.id) 
+                            ? "text-red-500 hover:text-red-400" 
+                            : "text-zinc-400 hover:text-white"
+                    )}
+                    title={isFavorite(currentSong.id) ? "取消收藏" : "添加到收藏"}
+                >
+                    <Heart className={cn("w-5 h-5", isFavorite(currentSong.id) && "fill-current")} />
+                </button>
             </div>
 
             {/* Center: Controls */}
@@ -341,7 +401,10 @@ export function Player() {
                     className="w-12 h-12 bg-white text-black rounded-full flex items-center justify-center hover:scale-105 active:scale-95 transition-all shadow-lg shadow-white/10"
                     onClick={togglePlay}
                 >
-                    {isPlaying ? (
+                    {isLoading ? (
+                        // Loading Spinner
+                        <div className="w-5 h-5 border-2 border-zinc-300 border-t-black rounded-full animate-spin" />
+                    ) : isPlaying ? (
                         // Custom Rounded Pause
                         <div className="flex gap-1">
                             <div className="w-[4px] h-4 bg-black rounded-full" />
